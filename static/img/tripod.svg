@@ -1,0 +1,8 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'>
+  <rect width='96' height='96' rx='16' fill='#0b1220'/>
+  <path d='M48 20v24' stroke='#8b5cf6' stroke-width='4' stroke-linecap='round'/>
+  <path d='M48 44 L26 80' stroke='#22d3ee' stroke-width='4' stroke-linecap='round'/>
+  <path d='M48 44 L70 80' stroke='#22d3ee' stroke-width='4' stroke-linecap='round'/>
+  <rect x='38' y='14' width='20' height='8' rx='2' fill='#8b5cf6'/>
+  <text x='8' y='90' font-size='10' fill='#9ca3af'>Tripod</text>
+</svg>

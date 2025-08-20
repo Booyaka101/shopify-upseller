@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Venv
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# Local data and DB
+/data/
+!data/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db

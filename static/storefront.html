@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BooPug Upsell Rules — Simulator</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="/static/img/boopug.svg" alt="BooPug" />
+      <h1>BooPug Simulator</h1>
+      <span class="badge">Product + Cart</span>
+    </div>
+    <nav>
+      <a href="/admin">Admin</a>
+      <a href="/simulator">Simulator</a>
+      <button id="themeToggle" class="secondary" style="margin-left:12px;">Light</button>
+    </nav>
+  </header>
+  <div class="container">
+    <div class="row" id="tools" style="margin-bottom:8px;align-items:center;gap:12px;">
+      <label class="small" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="toggleDebug" /> Show debug</label>
+      <button id="resetSession" class="secondary">Reset session</button>
+    </div>
+    <div class="grid">
+      <div class="card" id="productPanel">
+        <h2>Product Page</h2>
+        <div class="row" style="margin-bottom:6px;align-items:end;gap:8px;">
+          <label style="width:130px">Select product</label>
+          <select id="productSelect" style="flex:1"></select>
+        </div>
+        <div class="row" id="product"></div>
+        <div style="margin-top:10px;">
+          <h3 style="font-size:14px;margin:6px 0;">Upsell (Placement: product_page)</h3>
+          <div id="upsell_product"></div>
+          <pre id="debug_product" class="small" style="display:none; margin-top:8px; padding:6px; max-height:200px; overflow:auto;"></pre>
+        </div>
+      </div>
+      <div class="card" id="cartPanel">
+        <h2>Cart</h2>
+        <div id="cartItems"></div>
+        <div class="kv" style="margin-top:8px;"><span>Subtotal</span><strong id="subtotal">$0.00</strong></div>
+        <div id="cart_hint" class="badge warning" style="display:none;margin-top:8px;"></div>
+        <div style="margin-top:10px;">
+          <h3 style="font-size:14px;margin:6px 0;">Upsell (Placement: cart)</h3>
+          <div id="upsell_cart"></div>
+          <pre id="debug_cart" class="small" style="display:none; margin-top:8px; padding:6px; max-height:200px; overflow:auto;"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer>
+    © BooPug Studios — Upsell smarter, not harder 🐾
+  </footer>
+  <div class="toasts" id="toasts"></div>
+<script>
+const $ = s => document.querySelector(s);
+const api = (p, o={}) => fetch(p, {headers:{'Content-Type':'application/json'}, ...o}).then(r=>r.json());
+let catalog = [];
+let currentProduct = null;
+let cart = { items: [], subtotal: 0 };
+window.cart = cart;
+
+// Theme toggle (persisted)
+const THEME_KEY = 'boopug_theme';
+function updateThemeToggleLabel(){
+  const btn = document.getElementById('themeToggle'); if (!btn) return;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  btn.textContent = isLight ? 'Dark' : 'Light';
+  btn.title = isLight ? 'Switch to dark theme' : 'Switch to light theme';
+}
+function applyTheme(t){
+  if (t === 'light') document.documentElement.setAttribute('data-theme','light');
+  else document.documentElement.removeAttribute('data-theme');
+  localStorage.setItem(THEME_KEY, t);
+  updateThemeToggleLabel();
+}
+function initTheme(){
+  const saved = localStorage.getItem(THEME_KEY) || 'dark';
+  if (saved === 'light') document.documentElement.setAttribute('data-theme','light');
+  updateThemeToggleLabel();
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.onclick = ()=>{ const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; applyTheme(cur); };
+}
+
+function setCurrentProductById(pid){
+  const p = (catalog||[]).find(x=>x.id===pid) || catalog[0] || null;
+  if (!p) return;
+  currentProduct = p;
+  window.currentProduct = currentProduct;
+  renderProduct(currentProduct);
+  evaluateProduct();
+}
+
+// Simple session id (per tab)
+function genId(){ return Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2); }
+let session_id = (sessionStorage.getItem('boopug_session') || (sessionStorage.setItem('boopug_session', genId()), sessionStorage.getItem('boopug_session')));
+
+function format(n){ return `$${n.toFixed(2)}`; }
+function toast(msg){ const c = document.getElementById('toasts'); if (!c) return; const t = document.createElement('div'); t.className='toast'; t.textContent=msg; c.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>{ if (c.contains(t)) c.removeChild(t); }, 300); }, 2000); }
+function recalc(){ cart.subtotal = cart.items.reduce((s,i)=>s+i.price*i.qty,0); $('#subtotal').textContent = format(cart.subtotal); }
+function renderCart(){
+  const el = $('#cartItems'); el.innerHTML='';
+  if (!cart.items.length) { el.innerHTML = '<div class="empty">Your cart is empty. Add a product to get recommendations.</div>'; return; }
+  cart.items.forEach(i=>{
+    const d=document.createElement('div'); d.className='upsell-item';
+    d.innerHTML = `<img class="prod" src="${i.image}"/>
+      <div style="flex:1"><div><strong>${i.title}</strong></div>
+      <div class="small">#${i.id} • ${format(i.price)}</div></div>
+      <div class="qty"><button class="dec">-</button><span>${i.qty}</span><button class="inc">+</button></div>
+      <button class="secondary remove">Remove</button>`;
+    d.querySelector('.remove').onclick=()=>{ cart.items = cart.items.filter(x=>x.id!==i.id); recalc(); renderCart(); evaluateCart(); };
+    d.querySelector('.inc').onclick=()=>{ i.qty += 1; recalc(); renderCart(); evaluateCart(); };
+    d.querySelector('.dec').onclick=()=>{ i.qty = Math.max(0, i.qty - 1); if (i.qty===0) cart.items = cart.items.filter(x=>x.id!==i.id); recalc(); renderCart(); evaluateCart(); };
+    el.appendChild(d);
+  });
+}
+function addToCart(p){
+  const ex = cart.items.find(i=>i.id===p.id);
+  if(ex) ex.qty += 1; else cart.items.push({...p, qty:1});
+  recalc(); renderCart(); evaluateCart();
+}
+function renderProduct(p){
+  const el = $('#product'); el.innerHTML='';
+  const d=document.createElement('div'); d.className='upsell-item';
+  d.innerHTML = `<img class="prod" src="${p.image}"/>
+    <div style="flex:1"><div><strong>${p.title}</strong></div>
+    <div class="small">#${p.id} • ${p.tags.join(', ')}</div>
+    <div class="price"><span class="price-new">${format(p.price)}</span></div>
+    </div>
+    <button>Add to cart</button>`;
+  d.querySelector('button').onclick=()=>{ addToCart(p); toast(`Added ${p.title} to cart`); };
+  el.appendChild(d);
+}
+function suggestionEl(s){
+  const p = s.product; const d = document.createElement('div'); d.className='upsell-item';
+  const price = s.discount_pct ? p.price*(1 - s.discount_pct/100) : p.price;
+  const priceHtml = s.discount_pct
+    ? `<div class="price"><span class="price-old">${format(p.price)}</span><span class="price-new">${format(price)}</span></div>`
+    : `<div class="price"><span class="price-new">${format(price)}</span></div>`;
+  d.innerHTML = `<img class="prod" src="${p.image}"/>
+    <div style="flex:1">
+      <div><strong>${p.title}</strong> ${s.discount_pct?`<span class='badge success'>-${s.discount_pct}%</span>`:''}</div>
+      <div class="small">#${p.id}</div>
+      ${priceHtml}
+    </div>
+    <button>Add</button>`;
+  d.querySelector('button').onclick=()=>{
+    const placement = s.placement || 'cart';
+    // Click event (CTA tapped)
+    api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'click', placement, rule_id:s.rule_id, session_id})});
+    // Add to cart and log accept (conversion)
+    addToCart(p);
+    toast(`Added ${p.title} to cart`);
+    const meta = { product_id: p.id, product_title: p.title, base_price: p.price, discount_pct: s.discount_pct||0, discounted_price: price };
+    api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'accept', placement, rule_id:s.rule_id, session_id, meta})});
+  };
+  return d;
+}
+async function evaluateProduct(){
+  const res = await api('/api/evaluate',{method:'POST', body: JSON.stringify({session_id, debug: ($('#toggleDebug') && $('#toggleDebug').checked) || false, context:{ placement:'product_page', product: currentProduct, cart }})});
+  const host = $('#upsell_product'); host.innerHTML='';
+  (res.suggestions||[]).forEach(s=>{ host.appendChild(suggestionEl(s)); });
+  if(!((res.suggestions||[]).length)) host.innerHTML = '<div class="empty">No offers right now.</div>';
+  if((res.triggered_rules||[]).length) api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'impression', placement:'product_page', rule_id: res.triggered_rules[0], session_id})});
+  if((res.control_rules||[]).length) api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'impression_control', placement:'product_page', rule_id: res.control_rules[0], session_id})});
+  const dbgHost = $('#debug_product');
+  const showDbg = ($('#toggleDebug') && $('#toggleDebug').checked);
+  if (dbgHost){
+    if (showDbg && res.debug){ dbgHost.style.display='block'; dbgHost.textContent = JSON.stringify(res.debug, null, 2); }
+    else { dbgHost.style.display='none'; dbgHost.textContent=''; }
+  }
+}
+async function evaluateCart(){
+  const res = await api('/api/evaluate',{method:'POST', body: JSON.stringify({session_id, debug: ($('#toggleDebug') && $('#toggleDebug').checked) || false, context:{ placement:'cart', cart }})});
+  const host = $('#upsell_cart'); host.innerHTML='';
+  (res.suggestions||[]).forEach(s=>{ host.appendChild(suggestionEl(s)); });
+  if(!((res.suggestions||[]).length)) host.innerHTML = '<div class="empty">No offers right now.</div>';
+  if((res.triggered_rules||[]).length) api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'impression', placement:'cart', rule_id: res.triggered_rules[0], session_id})});
+  if((res.control_rules||[]).length) api('/api/analytics/event',{method:'POST', body:JSON.stringify({event_type:'impression_control', placement:'cart', rule_id: res.control_rules[0], session_id})});
+  const dbgHost = $('#debug_cart');
+  const showDbg = ($('#toggleDebug') && $('#toggleDebug').checked);
+  if (dbgHost){
+    if (showDbg && res.debug){ dbgHost.style.display='block'; dbgHost.textContent = JSON.stringify(res.debug, null, 2); }
+    else { dbgHost.style.display='none'; dbgHost.textContent=''; }
+  }
+  // Threshold hint (debug-only convenience)
+  const hint = $('#cart_hint');
+  if (hint){
+    if (showDbg && res.debug && Array.isArray(res.debug.rules)){
+      let best = null;
+      try {
+        for (const r of res.debug.rules){
+          const cond = (r.conditions || {});
+          const rng = cond.cart_subtotal_between;
+          if (rng && rng.min != null){
+            const min = Number(rng.min);
+            if (cart.subtotal < min){
+              const diff = Math.max(0, min - cart.subtotal);
+              if (!best || diff < best.diff){ best = {diff}; }
+            }
+          }
+        }
+      } catch(e) {}
+      if (best){ hint.style.display='inline-block'; hint.textContent = `Add ${format(best.diff)} more to unlock an offer`; }
+      else { hint.style.display='none'; hint.textContent=''; }
+    } else { hint.style.display='none'; hint.textContent=''; }
+  }
+}
+async function load(){
+  const c = await api('/api/catalog');
+  catalog = c.items||[]; currentProduct = catalog[0];
+  const sel = document.getElementById('productSelect');
+  if (sel) {
+    sel.innerHTML='';
+    catalog.forEach(p=>{ const o=document.createElement('option'); o.value=p.id; o.textContent=`${p.title} (#${p.id})`; sel.appendChild(o); });
+    if (currentProduct) sel.value = String(currentProduct.id);
+    sel.onchange = ()=>{ setCurrentProductById(parseInt(sel.value)); };
+  }
+  renderProduct(currentProduct); recalc(); renderCart();
+  evaluateProduct(); evaluateCart();
+}
+// Wire debug toggle and session reset
+const debugToggle = document.getElementById('toggleDebug');
+if (debugToggle) debugToggle.onchange = ()=>{ evaluateProduct(); evaluateCart(); };
+const resetBtn = document.getElementById('resetSession');
+if (resetBtn) resetBtn.onclick = ()=>{
+  sessionStorage.removeItem('boopug_session');
+  sessionStorage.setItem('boopug_session', genId());
+  session_id = sessionStorage.getItem('boopug_session');
+  evaluateProduct(); evaluateCart();
+};
+initTheme();
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'>
+  <rect width='96' height='96' rx='16' fill='#0b1220'/>
+  <path d='M28 20h36l4 8v48a6 6 0 0 1-6 6H30a6 6 0 0 1-6-6V26a6 6 0 0 1 6-6z' fill='none' stroke='#22d3ee' stroke-width='3'/>
+  <rect x='34' y='30' width='6' height='10' fill='#8b5cf6'/>
+  <rect x='44' y='30' width='6' height='10' fill='#8b5cf6'/>
+  <rect x='54' y='30' width='6' height='10' fill='#8b5cf6'/>
+  <text x='8' y='90' font-size='10' fill='#9ca3af'>SD Card</text>
+</svg>

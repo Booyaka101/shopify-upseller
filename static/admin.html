@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BooPug Upsell Rules — Admin</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="/static/img/boopug.svg" alt="BooPug" />
+      <h1>BooPug Upsell Rules — Admin</h1>
+      <span class="badge">BooPug Studios</span>
+    </div>
+    <nav>
+      <a href="/admin">Admin</a>
+      <a href="/simulator">Simulator</a>
+      <a href="https://boopug.studio" target="_blank">Website</a>
+      <button id="themeToggle" class="secondary" style="margin-left:12px;">Light</button>
+    </nav>
+  </header>
+  <div class="container">
+    <div class="card" id="shopifyInstallCard" style="margin-bottom:16px;">
+      <h2>Install on Shopify</h2>
+      <p class="small">Enter your shop domain to install or open this app inside Shopify Admin.</p>
+      <div class="row" style="align-items:flex-end; gap:10px;">
+        <div style="flex:1">
+          <label>Shop domain</label>
+          <input id="shopDomain" type="text" placeholder="your-store.myshopify.com" />
+        </div>
+        <div style="width:220px">
+          <button id="startShopifyOAuth">Install / Open in Shopify</button>
+        </div>
+      </div>
+      <div class="small" style="margin-top:6px;color:var(--muted);">Tip: If already in Shopify Admin, this will open the authorization prompt.</div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <h2>Create Rule</h2>
+        <div class="row">
+          <div style="flex:1">
+            <label>Name</label>
+            <input id="name" type="text" placeholder="Camera → SD Card" />
+          </div>
+          <div style="width:220px">
+            <label>Placement</label>
+            <select id="placement">
+              <option value="product_page">Product Page</option>
+              <option value="cart">Cart</option>
+            </select>
+          </div>
+          <div style="width:120px">
+            <label>Limit</label>
+            <input id="limit" type="number" value="1" min="1" />
+          </div>
+          <div style="width:120px">
+            <label>Priority</label>
+            <input id="priority" type="number" value="100" />
+          </div>
+          <div style="width:160px">
+            <label>Per-session cap</label>
+            <input id="session_cap" type="number" value="0" min="0" />
+          </div>
+          <div style="width:140px">
+            <label>A/B % (treatment)</label>
+            <input id="ab_pct" type="number" value="100" min="0" max="100" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <div style="flex:1">
+            <label>Schedule start</label>
+            <input id="schedule_start" type="datetime-local" />
+          </div>
+          <div style="flex:1">
+            <label>Schedule end</label>
+            <input id="schedule_end" type="datetime-local" />
+          </div>
+        </div>
+        <div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:10px;">
+          <div>
+            <h3 style="margin:6px 0;font-size:14px;">Conditions</h3>
+            <label>Product tags (any)</label>
+            <input id="c_tags" type="text" placeholder="camera, starter" />
+            <label style="margin-top:8px;">Product collections (any)</label>
+            <input id="c_cols" type="text" placeholder="cameras, accessories" />
+            <div class="row" style="margin-top:8px;">
+              <div style="flex:1">
+                <label>Cart subtotal min</label>
+                <input id="c_min" type="number" step="0.01" placeholder="0" />
+              </div>
+              <div style="flex:1">
+                <label>Cart subtotal max</label>
+                <input id="c_max" type="number" step="0.01" placeholder="9999" />
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 style="margin:6px 0;font-size:14px;">Suggestions</h3>
+            <div id="suggestions"></div>
+            <button id="addSuggestion" class="secondary" style="margin-top:6px;">+ Add suggestion</button>
+          </div>
+        </div>
+        <div class="flex" style="margin-top:12px;">
+          <button id="create">Create Rule</button>
+          <button id="seed" class="secondary">Seed Sample Rules</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Catalog (Simulator)</h2>
+        <div id="catalog"></div>
+      </div>
+    </div>
+
+    <div class="grid" style="margin-top:20px;">
+      <div class="card">
+        <h2>Rules</h2>
+        <div class="row" style="gap:8px;margin-bottom:8px;align-items:flex-end;">
+          <button id="exportRules" class="secondary">Export JSON</button>
+          <input id="importFile" type="file" accept="application/json" />
+          <label class="small" style="display:flex;align-items:center;gap:6px;">
+            <input id="replaceExisting" type="checkbox" /> Replace existing
+          </label>
+          <button id="importRules">Import</button>
+          <button id="importTemplate" class="secondary">Import from Template</button>
+          <div style="flex:1"></div>
+          <input id="searchRules" type="text" placeholder="Search rules..." style="max-width:260px" />
+          <select id="filterPlacement" style="width:160px">
+            <option value="all">All placements</option>
+            <option value="product_page">Product Page</option>
+            <option value="cart">Cart</option>
+          </select>
+          <select id="filterStatus" style="width:140px">
+            <option value="all">All status</option>
+            <option value="active">active</option>
+            <option value="paused">paused</option>
+          </select>
+          <button id="resetFilters" class="secondary">Reset Filters</button>
+        </div>
+        <table class="table" id="rulesTable">
+          <thead>
+            <tr><th>ID</th><th>Name</th><th>Placement</th><th>Limit</th><th>Priority</th><th>Cap</th><th>AB%</th><th>Status</th><th>Impr</th><th>Ctrl</th><th>Acc</th><th>Rate</th><th>Lift</th><th>Rev</th><th>Disc</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="rulesEmpty" class="empty" style="display:none; margin-top:8px;">No rules match your filters.</div>
+      </div>
+      <div class="card">
+        <h2>Analytics</h2>
+        <div class="kv"><span>Impressions</span><strong id="impr">0</strong></div>
+        <div class="kv"><span>Clicks</span><strong id="clicks">0</strong></div>
+        <div class="kv"><span>Accepted</span><strong id="accepted">0</strong></div>
+      </div>
+    </div>
+  </div>
+  <footer>
+    © BooPug Studios — Make your store pug‑tastically profitable 🐶
+  </footer>
+  <div class="toasts" id="toasts"></div>
+
+<script>
+const $ = sel => document.querySelector(sel);
+const api = (p, opts={}) => fetch(p, {headers:{'Content-Type':'application/json'}, ...opts}).then(r=>r.json());
+
+let catalog = [];
+const debounce = (fn, ms=200) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+function toast(msg){ const c = document.getElementById('toasts'); if (!c) return; const t=document.createElement('div'); t.className='toast'; t.textContent=msg; c.appendChild(t); setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>{ if(c.contains(t)) c.removeChild(t); }, 300); }, 1800); }
+
+// Theme toggle (persisted)
+const THEME_KEY = 'boopug_theme';
+function updateThemeToggleLabel(){
+  const btn = document.getElementById('themeToggle'); if (!btn) return;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  btn.textContent = isLight ? 'Dark' : 'Light';
+  btn.title = isLight ? 'Switch to dark theme' : 'Switch to light theme';
+}
+function applyTheme(t){
+  if (t === 'light') document.documentElement.setAttribute('data-theme','light');
+  else document.documentElement.removeAttribute('data-theme');
+  localStorage.setItem(THEME_KEY, t);
+  updateThemeToggleLabel();
+}
+function initTheme(){
+  const saved = localStorage.getItem(THEME_KEY) || 'dark';
+  if (saved === 'light') document.documentElement.setAttribute('data-theme','light');
+  updateThemeToggleLabel();
+  const btn = document.getElementById('themeToggle');
+  if (btn) btn.onclick = ()=>{ const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; applyTheme(cur); };
+}
+const sortState = { key: 'priority', dir: 'desc' };
+const headerKeys = ['id','name','placement','limit_count','priority','per_session_cap','ab_test_pct','status','impression','control_impression','accept','rate','lift','revenue','discount','__actions__'];
+function applyHeaderSortIndicators(){
+  const ths = document.querySelectorAll('#rulesTable thead th');
+  ths.forEach((th, idx)=>{
+    const key = headerKeys[idx];
+    if (key === '__actions__') { th.removeAttribute('aria-sort'); return; }
+    const label = th.textContent.replace(/[\s▲▼]+$/,'');
+    th.textContent = label + (sortState.key===key ? (sortState.dir==='asc'?' ▲':' ▼') : '');
+    th.setAttribute('aria-sort', sortState.key===key ? (sortState.dir==='asc' ? 'ascending' : 'descending') : 'none');
+  });
+}
+
+// Persist Admin page search/filter/sort state
+const ADMIN_STATE_KEY = 'boopug_admin_state_v1';
+function getDefaultAdminState(){
+  return { q: '', fp: 'all', fs: 'all', sort: { key: 'priority', dir: 'desc' } };
+}
+function loadAdminState(){
+  try {
+    const raw = localStorage.getItem(ADMIN_STATE_KEY);
+    if (!raw) return getDefaultAdminState();
+    const s = JSON.parse(raw);
+    const validDir = s?.sort?.dir === 'asc' || s?.sort?.dir === 'desc' ? s.sort.dir : 'desc';
+    const validKey = headerKeys.includes(s?.sort?.key) ? s.sort.key : 'priority';
+    return {
+      q: typeof s.q === 'string' ? s.q : '',
+      fp: s.fp || 'all',
+      fs: s.fs || 'all',
+      sort: { key: validKey, dir: validDir }
+    };
+  } catch {
+    return getDefaultAdminState();
+  }
+}
+function saveAdminState(){
+  const s = {
+    q: document.getElementById('searchRules')?.value || '',
+    fp: document.getElementById('filterPlacement')?.value || 'all',
+    fs: document.getElementById('filterStatus')?.value || 'all',
+    sort: { key: sortState.key, dir: sortState.dir }
+  };
+  try { localStorage.setItem(ADMIN_STATE_KEY, JSON.stringify(s)); } catch {}
+}
+function applyAdminState(st){
+  const s = st || getDefaultAdminState();
+  const qEl = document.getElementById('searchRules'); if (qEl) qEl.value = s.q;
+  const fpEl = document.getElementById('filterPlacement'); if (fpEl) fpEl.value = s.fp;
+  const fsEl = document.getElementById('filterStatus'); if (fsEl) fsEl.value = s.fs;
+  sortState.key = s.sort.key; sortState.dir = s.sort.dir;
+}
+function initAdminState(){
+  const st = loadAdminState();
+  applyAdminState(st);
+}
+
+// Shopify install helpers
+function normShopDomain(s){
+  if (!s) return '';
+  let v = String(s).trim().toLowerCase();
+  if (!v) return '';
+  if (!v.includes('.')) v = v + '.myshopify.com';
+  return v;
+}
+function startOAuth(shop){
+  const d = normShopDomain(shop);
+  if (!d || !/^[a-z0-9-]+\.myshopify\.com$/.test(d)) { alert('Enter a valid shop, e.g. your-store.myshopify.com'); return; }
+  window.location.href = `/shopify/auth?shop=${encodeURIComponent(d)}`;
+}
+
+const suggestionRow = (products) => {
+  const wrap = document.createElement('div');
+  wrap.className = 'row';
+  wrap.innerHTML = `
+    <div style="flex:1">
+      <label>Product</label>
+      <select class="s-product"></select>
+    </div>
+    <div style="width:140px">
+      <label>Discount %</label>
+      <input class="s-disc" type="number" step="1" value="0" />
+    </div>
+    <div style="width:80px;align-self:flex-end">
+      <button class="secondary s-del">Remove</button>
+    </div>
+  `;
+  const sel = wrap.querySelector('.s-product');
+  products.forEach(p=>{
+    const o=document.createElement('option'); o.value=p.id; o.textContent=`${p.title} (#${p.id})`;
+    sel.appendChild(o);
+  });
+  wrap.querySelector('.s-del').onclick=()=>wrap.remove();
+  return wrap;
+}
+
+async function load() {
+  // Prefill shop domain from query param if present
+  try {
+    const sp = new URLSearchParams(location.search);
+    const qsShop = sp.get('shop');
+    if (qsShop) {
+      const inp = document.getElementById('shopDomain');
+      if (inp) inp.value = qsShop;
+    }
+  } catch {}
+  const h = await api('/api/health');
+  const c = await api('/api/catalog');
+  catalog = c.items || [];
+  const catEl = $('#catalog');
+  catEl.innerHTML = '';
+  catalog.forEach(p=>{
+    const d = document.createElement('div'); d.className='upsell-item';
+    d.innerHTML = `<img class="prod" src="${p.image}" alt=""/> <div style="flex:1"><div><strong>${p.title}</strong></div><div class="small">#${p.id} • $${p.price.toFixed(2)} • ${p.tags.join(', ')}</div></div>`;
+    catEl.appendChild(d);
+  });
+  addSuggestionRow();
+  refreshRules();
+  refreshAnalytics();
+}
+
+function addSuggestionRow(){
+  $('#suggestions').appendChild(suggestionRow(catalog));
+}
+
+$('#addSuggestion').onclick = addSuggestionRow;
+
+// Wire Shopify Install button
+document.getElementById('startShopifyOAuth')?.addEventListener('click', ()=>{
+  const inp = document.getElementById('shopDomain');
+  startOAuth(inp && inp.value ? inp.value : '');
+});
+
+$('#create').onclick = async () => {
+  const conditions = {};
+  const tags = $('#c_tags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if (tags.length) conditions.product_tags_any = tags;
+  const cols = $('#c_cols').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if (cols.length) conditions.product_collections_any = cols;
+  const min = parseFloat($('#c_min').value); const max = parseFloat($('#c_max').value);
+  if (!isNaN(min) || !isNaN(max)) conditions.cart_subtotal_between = {min: isNaN(min)?0:min, max: isNaN(max)?999999:max};
+
+  const suggestions = Array.from(document.querySelectorAll('#suggestions .row')).map(r=>({
+    product_id: parseInt(r.querySelector('.s-product').value),
+    discount_pct: parseFloat(r.querySelector('.s-disc').value||'0')
+  }));
+
+  const toTs = v => v ? Math.floor(new Date(v).getTime()/1000) : null;
+  const schedule_start = toTs($('#schedule_start').value);
+  const schedule_end = toTs($('#schedule_end').value);
+
+  const payload = {
+    name: $('#name').value || 'New Rule',
+    placement: $('#placement').value,
+    limit: parseInt($('#limit').value||'1'),
+    priority: parseInt($('#priority').value||'100'),
+    per_session_cap: parseInt($('#session_cap').value||'0'),
+    ab_test_pct: parseInt($('#ab_pct').value||'100'),
+    schedule_start: schedule_start,
+    schedule_end: schedule_end,
+    status: 'active',
+    conditions,
+    suggestions
+  };
+  await api('/api/rules', {method:'POST', body: JSON.stringify(payload)});
+  refreshRules();
+}
+
+async function refreshRules(){
+  const [data, metrics] = await Promise.all([
+    api('/api/rules'),
+    api('/api/analytics/by-rule')
+  ]);
+  const m = (metrics && metrics.rules) ? metrics.rules : {};
+  const tb = document.querySelector('#rulesTable tbody');
+  const empty = document.querySelector('#rulesEmpty');
+  tb.innerHTML='';
+
+  const q = ($('#searchRules')?.value || '').toLowerCase();
+  const fp = $('#filterPlacement')?.value || 'all';
+  const fs = $('#filterStatus')?.value || 'all';
+
+  // Build rows with computed values
+  let rows = (data.rules||[]).map(r=>{
+    const rid = String(r.id);
+    const kpi = m[rid] || {impression:0, control_impression:0, accept:0, rate:0, lift:0, revenue:0, discount:0};
+    return { r, kpi,
+      values: {
+        id: r.id,
+        name: (r.name||'').toLowerCase(),
+        placement: r.placement,
+        limit_count: r.limit_count,
+        priority: r.priority ?? 100,
+        per_session_cap: r.per_session_cap ?? 0,
+        ab_test_pct: r.ab_test_pct ?? 100,
+        status: r.status || 'active',
+        impression: kpi.impression||0,
+        control_impression: kpi.control_impression||0,
+        accept: kpi.accept||0,
+        rate: +(kpi.rate||0),
+        lift: +(kpi.lift||0),
+        revenue: +(kpi.revenue||0),
+        discount: +(kpi.discount||0)
+      }
+    };
+  });
+
+  // Filter
+  rows = rows.filter(x=>{
+    const okSearch = !q || (x.r.name||'').toLowerCase().includes(q);
+    const okPlacement = fp==='all' || x.r.placement===fp;
+    const okStatus = fs==='all' || (x.r.status||'active')===fs;
+    return okSearch && okPlacement && okStatus;
+  });
+
+  // Sort
+  const key = sortState.key; const dir = sortState.dir==='asc'?1:-1;
+  rows.sort((a,b)=>{
+    const va = a.values[key]; const vb = b.values[key];
+    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+    return String(va).localeCompare(String(vb)) * dir;
+  });
+
+  // Render
+  rows.forEach(({r,kpi})=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${r.id}</td>
+      <td>${r.name}</td>
+      <td>${r.placement}</td>
+      <td>${r.limit_count}</td>
+      <td><input type="number" class="edit-priority" value="${r.priority??100}" style="width:80px" /></td>
+      <td>${r.per_session_cap??0}</td>
+      <td><input type="number" class="edit-ab" value="${r.ab_test_pct??100}" min="0" max="100" style="width:70px" /></td>
+      <td>
+        <select class="edit-status">
+          <option value="active" ${r.status==='active'?'selected':''}>active</option>
+          <option value="paused" ${r.status==='paused'?'selected':''}>paused</option>
+        </select>
+      </td>
+      <td>${kpi.impression||0}</td>
+      <td>${kpi.control_impression||0}</td>
+      <td>${kpi.accept||0}</td>
+      <td>${(kpi.rate||0).toFixed(2)}</td>
+      <td>${(kpi.lift||0).toFixed(4)}</td>
+      <td>$${(kpi.revenue||0).toFixed(2)}</td>
+      <td>$${(kpi.discount||0).toFixed(2)}</td>
+      <td>
+        <div class="flex" style="gap:6px;">
+          <button data-id="${r.id}" class="save">Save</button>
+          <button data-id="${r.id}" class="secondary del">Delete</button>
+        </div>
+      </td>`;
+    tb.appendChild(tr);
+    const saveBtn = tr.querySelector('.save');
+    const pri = tr.querySelector('.edit-priority');
+    const ab = tr.querySelector('.edit-ab');
+    const st = tr.querySelector('.edit-status');
+    if (saveBtn && pri && st) {
+      saveBtn.onclick = async () => {
+        const payload = { priority: parseInt(pri.value||'100'), status: st.value, ab_test_pct: parseInt(ab.value||'100') };
+        await api(`/api/rules/${r.id}`, {method:'PUT', body: JSON.stringify(payload)});
+        toast('Rule saved');
+        refreshRules();
+      };
+    }
+  });
+  tb.querySelectorAll('.del').forEach(btn=>{
+    btn.onclick = async () => { await fetch(`/api/rules/${btn.dataset.id}`, {method:'DELETE'}); toast('Rule deleted'); refreshRules(); };
+  });
+  // Empty state
+  if (empty) empty.style.display = rows.length ? 'none' : 'block';
+  applyHeaderSortIndicators();
+}
+
+async function refreshAnalytics(){
+  const s = await api('/api/analytics/summary');
+  $('#impr').textContent = s.summary?.impression||0;
+  $('#clicks').textContent = s.summary?.click||0;
+  $('#accepted').textContent = s.summary?.accept||0;
+}
+
+$('#seed').onclick = async ()=>{
+  // Camera -> SD Card (product page)
+  await api('/api/rules', {method:'POST', body: JSON.stringify({
+    name: 'Camera → SD Card', placement:'product_page', limit:1, status:'active',
+    conditions: { product_tags_any: ['camera'] },
+    suggestions: [{ product_id: 1002, discount_pct: 10 }]
+  })});
+  // Cart bump (subtotal between $30 and $60) suggest Cleaning Kit
+  await api('/api/rules', {method:'POST', body: JSON.stringify({
+    name: 'Subtotal bump → Cleaning Kit', placement:'cart', limit:1, status:'active',
+    conditions: { cart_subtotal_between: {min:30, max:60} },
+    suggestions: [{ product_id: 1004, discount_pct: 0 }]
+  })});
+  refreshRules();
+};
+
+// Export rules as JSON file
+const exportBtn = document.querySelector('#exportRules');
+if (exportBtn) exportBtn.onclick = async () => {
+  const data = await api('/api/rules/export');
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `boopug_rules_${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 0);
+};
+
+// Import rules from selected JSON file
+const importBtn = document.querySelector('#importRules');
+if (importBtn) importBtn.onclick = async () => {
+  const fileInput = document.querySelector('#importFile');
+  const replace = document.querySelector('#replaceExisting');
+  const f = fileInput && fileInput.files ? fileInput.files[0] : null;
+  if (!f) { alert('Choose a JSON file to import.'); return; }
+  try {
+    const text = await f.text();
+    const json = JSON.parse(text);
+    const rep = replace && replace.checked ? 'true' : 'false';
+    await api(`/api/rules/import?replace=${rep}`, {method:'POST', body: JSON.stringify(json)});
+    refreshRules();
+    toast('Import completed');
+  } catch (e) {
+    alert('Import failed: ' + (e && e.message ? e.message : e));
+  }
+};
+
+// Import from template
+const importTmplBtn = document.querySelector('#importTemplate');
+if (importTmplBtn) importTmplBtn.onclick = async () => {
+  try {
+    const json = await fetch('/static/boopug_rules_template.json').then(r=>r.json());
+    await api('/api/rules/import?replace=false', {method:'POST', body: JSON.stringify(json)});
+    toast('Template imported');
+    refreshRules();
+  } catch (e) { alert('Template import failed: ' + (e?.message||e)); }
+};
+
+// Sorting handlers
+document.querySelectorAll('#rulesTable thead th').forEach((th, idx)=>{
+  const key = headerKeys[idx]; if (key==='__actions__') return;
+  th.style.cursor = 'pointer';
+  th.setAttribute('tabindex','0');
+  th.onclick = () => {
+    if (sortState.key === key) sortState.dir = (sortState.dir==='asc'?'desc':'asc');
+    else { sortState.key = key; sortState.dir = 'asc'; }
+    saveAdminState();
+    refreshRules();
+  };
+  th.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); th.click(); }
+  };
+});
+
+// Search & filters
+const onSearchInput = debounce(()=>{ saveAdminState(); refreshRules(); }, 200);
+$('#searchRules')?.addEventListener('input', onSearchInput);
+$('#filterPlacement')?.addEventListener('change', ()=>{ saveAdminState(); refreshRules(); });
+$('#filterStatus')?.addEventListener('change', ()=>{ saveAdminState(); refreshRules(); });
+
+// Reset filters
+document.getElementById('resetFilters')?.addEventListener('click', ()=>{
+  const s = document.getElementById('searchRules'); if (s) s.value = '';
+  const fp = document.getElementById('filterPlacement'); if (fp) fp.value = 'all';
+  const fs = document.getElementById('filterStatus'); if (fs) fs.value = 'all';
+  sortState.key = 'priority'; sortState.dir = 'desc';
+  saveAdminState();
+  refreshRules();
+  toast('Filters reset');
+});
+
+initAdminState();
+initTheme();
+load();
+
+</script>
+<script type="module">
+async function initAppBridge(){
+  try {
+    const params = new URLSearchParams(location.search);
+    const host = params.get('host');
+    const cfg = await fetch('/shopify/config').then(r=>r.ok?r.json():null).catch(()=>null);
+    if (!cfg || !cfg.apiKey) return; // not configured as Shopify app
+    const inIframe = (window.top !== window.self);
+    if (!host && inIframe && cfg.shop) {
+      // Trigger top-level OAuth so Shopify provides host param on return
+      window.top.location.href = `/shopify/auth?shop=${encodeURIComponent(cfg.shop)}`;
+      return;
+    }
+    if (host) {
+      const mod = await import('https://unpkg.com/@shopify/app-bridge@3?module');
+      const createApp = mod && (mod.default || mod.createApp || mod);
+      if (typeof createApp === 'function') {
+        const app = createApp({ apiKey: cfg.apiKey, host });
+        window.__appBridge = app;
+        const card = document.getElementById('shopifyInstallCard');
+        if (card) card.style.display = 'none';
+        // Optionally, focus the app or set up features later
+        console.log('Shopify App Bridge initialized');
+      }
+    }
+  } catch (e) {
+    console.warn('App Bridge init skipped', e);
+  }
+}
+initAppBridge();
+</script>
+</body>
+</html>
