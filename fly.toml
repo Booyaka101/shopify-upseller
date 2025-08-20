@@ -1,0 +1,20 @@
+app = "boopug-upsell"
+primary_region = "hkg"
+
+# Use the Dockerfile in the project root for builds
+[build]
+  dockerfile = "Dockerfile"
+
+# HTTP service configuration for Fly Machines
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+# Persistent storage for SQLite database at /app/data
+[[mounts]]
+  source = "data"
+  destination = "/app/data"
