@@ -104,17 +104,23 @@ def init_db() -> None:
         cur.execute("ALTER TABLE rules ADD COLUMN per_session_cap INTEGER NOT NULL DEFAULT 0")
     if "ab_test_pct" not in r_cols:
         cur.execute("ALTER TABLE rules ADD COLUMN ab_test_pct INTEGER NOT NULL DEFAULT 100")
+    if "shop" not in r_cols:
+        cur.execute("ALTER TABLE rules ADD COLUMN shop TEXT")
 
     # analytics: session_id
     cur.execute("PRAGMA table_info(analytics)")
     a_cols = {row[1] for row in cur.fetchall()}
     if "session_id" not in a_cols:
         cur.execute("ALTER TABLE analytics ADD COLUMN session_id TEXT")
+    if "shop" not in a_cols:
+        cur.execute("ALTER TABLE analytics ADD COLUMN shop TEXT")
     # Indexes for performance
     cur.execute("CREATE INDEX IF NOT EXISTS idx_rules_status_priority ON rules(status, priority)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_analytics_rule_event ON analytics(rule_id, event_type)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_analytics_session ON analytics(session_id)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics(ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_rules_shop_status ON rules(shop, status, priority)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_analytics_shop ON analytics(shop, rule_id, event_type)")
     # Shopify shops table
     cur.execute(
         """
@@ -231,6 +237,7 @@ async def add_security_headers(request: Request, call_next):
         "default-src 'self'; "
         "img-src 'self' data:; "
         "style-src 'self' 'unsafe-inline'; "
+        "font-src 'self' https://cdn.shopify.com https://fonts.shopifycdn.com data:; "
         "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.shopify.com; "
         "connect-src 'self' https://*.myshopify.com https://admin.shopify.com; "
         "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com"
@@ -258,6 +265,19 @@ async def root() -> RedirectResponse:
 
 security = HTTPBasic()
 
+def require_admin_or_shop_session(request: Request, credentials: HTTPBasicCredentials = Depends(security)) -> None:
+    # If Shopify app credentials exist and a valid shop cookie/session is present, allow.
+    shop_cookie = request.cookies.get("shop")
+    if SHOPIFY_API_KEY and SHOPIFY_API_SECRET and shop_cookie and shop_installed(shop_cookie):
+        return
+    # Otherwise fall back to Basic Auth
+    if not (ADMIN_USERNAME and ADMIN_PASSWORD):
+        if ENV == "prod":
+            raise HTTPException(status_code=503, detail="Admin auth not configured")
+        return
+    if not (credentials.username == ADMIN_USERNAME and credentials.password == ADMIN_PASSWORD):
+        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
+
 def shop_installed(shop: str) -> bool:
     if not shop:
         return False
@@ -278,6 +298,11 @@ def get_shop_token(shop: str) -> Optional[str]:
     row = cur.fetchone()
     conn.close()
     return row[0] if row and row[0] else None
+
+
+def current_shop_from_request(request: Request) -> Optional[str]:
+    """Best-effort shop resolver from cookie or query param."""
+    return request.cookies.get("shop") or request.query_params.get("shop")
 
 
 async def shopify_graphql(shop: str, token: str, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -309,7 +334,8 @@ async def register_app_uninstalled_webhook(shop: str, token: str) -> None:
 
 async def ensure_storefront_script_tag(shop: str, token: str) -> None:
     try:
-        src = f"{APP_URL}/storefront/boopug.js"
+        src_base = f"{APP_URL}/storefront/boopug.js"
+        src_full = f"{src_base}?shop={shop}"
         base = f"https://{shop}/admin/api/2023-07/script_tags.json"
         headers = {"X-Shopify-Access-Token": token}
         async with httpx.AsyncClient(timeout=20) as client:
@@ -319,38 +345,45 @@ async def ensure_storefront_script_tag(shop: str, token: str) -> None:
                 data = r.json() or {}
                 tags = data.get("script_tags", [])
                 for t in tags:
-                    if str(t.get("src")).startswith(src):
-                        return  # already installed
+                    esrc = str(t.get("src") or "")
+                    if esrc.split("?")[0] == src_base:
+                        # If same base but different or missing query, update to include shop param
+                        if esrc != src_full and t.get("id"):
+                            try:
+                                upd_url = f"https://{shop}/admin/api/2023-07/script_tags/{t['id']}.json"
+                                await client.put(upd_url, json={"script_tag": {"src": src_full}}, headers=headers)
+                            except Exception:
+                                pass
+                        return  # already present (updated if needed)
             # Create new
-            await client.post(base, json={"script_tag": {"event": "onload", "src": src}}, headers=headers)
+            await client.post(base, json={"script_tag": {"event": "onload", "src": src_full}}, headers=headers)
     except Exception:
         pass
 
 
 @app.get("/shopify/config", dependencies=[Depends(require_admin_or_shop_session)])
 async def shopify_config(request: Request) -> Dict[str, Any]:
-    shop = request.cookies.get("shop") or request.query_params.get("shop")
+    shop = current_shop_from_request(request)
     return {"apiKey": SHOPIFY_API_KEY, "shop": shop}
-
-def require_admin_or_shop_session(request: Request, credentials: HTTPBasicCredentials = Depends(security)) -> None:
-    # If Shopify app credentials exist and a valid shop cookie/session is present, allow.
-    shop_cookie = request.cookies.get("shop")
-    if SHOPIFY_API_KEY and SHOPIFY_API_SECRET and shop_cookie and shop_installed(shop_cookie):
-        return
-    # Otherwise fall back to Basic Auth
-    if not (ADMIN_USERNAME and ADMIN_PASSWORD):
-        if ENV == "prod":
-            raise HTTPException(status_code=503, detail="Admin auth not configured")
-        return
-    if not (credentials.username == ADMIN_USERNAME and credentials.password == ADMIN_PASSWORD):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Basic"})
 
 
 @app.get("/admin", dependencies=[Depends(require_admin_or_shop_session)])
 async def admin_ui() -> FileResponse:
+    """Serve the new SPA if present; otherwise fall back to legacy admin."""
+    spa_index = STATIC_DIR / "admin-spa" / "index.html"
+    if spa_index.exists():
+        return FileResponse(str(spa_index))
+    # Fallback to legacy
+    legacy = STATIC_DIR / "admin.html"
+    if not legacy.exists():
+        raise HTTPException(500, "Admin UI not found. Did files generate?")
+    return FileResponse(str(legacy))
+
+@app.get("/admin-legacy", dependencies=[Depends(require_admin_or_shop_session)])
+async def admin_legacy() -> FileResponse:
     path = STATIC_DIR / "admin.html"
     if not path.exists():
-        raise HTTPException(500, "Admin UI not found. Did files generate?")
+        raise HTTPException(500, "Legacy Admin UI not found. Did files generate?")
     return FileResponse(str(path))
 
 
@@ -451,6 +484,13 @@ async def shopify_callback(request: Request) -> RedirectResponse:
         cur.execute("INSERT INTO shops (shop, access_token, installed_at, updated_at) VALUES (?,?,?,?)", (shop, access_token, now, now))
     conn.commit()
     conn.close()
+    # Post-install tasks: register webhook and ensure storefront script tag
+    try:
+        await register_app_uninstalled_webhook(shop, access_token)
+        await ensure_storefront_script_tag(shop, access_token)
+    except Exception:
+        # Non-fatal; proceed with redirect
+        pass
     # Set shop cookie and redirect to admin
     resp = RedirectResponse(url=f"/admin?shop={urllib.parse.quote(shop)}")
     resp.set_cookie(
@@ -464,6 +504,35 @@ async def shopify_callback(request: Request) -> RedirectResponse:
     # Clear state cookie
     resp.delete_cookie("oauth_state")
     return resp
+
+
+@app.post("/shopify/webhooks/app_uninstalled")
+async def webhook_app_uninstalled(request: Request) -> Response:
+    """Handle app/uninstalled webhook: verify HMAC and clear shop token."""
+    # If not configured as a Shopify app, acknowledge to avoid retries
+    if not SHOPIFY_API_SECRET:
+        return Response(status_code=200)
+    raw_body = await request.body()
+    provided_sig = request.headers.get("X-Shopify-Hmac-Sha256", "")
+    try:
+        digest = hmac.new(SHOPIFY_API_SECRET.encode("utf-8"), raw_body, hashlib.sha256).digest()
+        expected_sig = base64.b64encode(digest).decode()
+    except Exception:
+        expected_sig = ""
+    if not (provided_sig and secrets.compare_digest(provided_sig, expected_sig)):
+        # Unauthorized to ensure Shopify doesn't retry with bad secret
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    shop = request.headers.get("X-Shopify-Shop-Domain", "")
+    now = int(time.time())
+    conn = get_conn()
+    cur = conn.cursor()
+    if shop:
+        # Clear access token but retain record
+        cur.execute("UPDATE shops SET access_token=NULL, updated_at=? WHERE shop=?", (now, shop))
+    conn.commit()
+    conn.close()
+    return Response(status_code=200)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -480,6 +549,51 @@ async def simulator_ui() -> FileResponse:
     return FileResponse(str(path))
 
 
+@app.get("/storefront/boopug.js")
+async def storefront_script() -> Response:
+    """Serve a lightweight storefront script that evaluates rules and logs impressions.
+
+    The script detects placement via URL path, requests suggestions, and posts impression analytics.
+    It derives the base URL from the script tag src to avoid relying on APP_URL.
+    """
+    js = (
+        "(function(){\n"
+        "  try {\n"
+        "    var s = document.currentScript || (function(){var scripts=document.getElementsByTagName('script');return scripts[scripts.length-1];})();\n"
+        "    var src = s && s.src || '';\n"
+        "    var u = (function(){ try { return new URL(src, (location && location.origin) || undefined); } catch(e){ return null; }})();\n"
+        "    var base = src.split('/storefront/')[0] || ((u && u.origin) || (location.origin || ''));\n"
+        "    var shop = (u && u.searchParams && u.searchParams.get('shop')) || '';\n"
+        "    var key = 'boopug_sid';\n"
+        "    var sid = localStorage.getItem(key);\n"
+        "    if(!sid){ sid = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(key, sid); }\n"
+        "    var path = (location && location.pathname) || '';\n"
+        "    var placement = path.indexOf('/cart') !== -1 ? 'cart' : 'product_page';\n"
+        "    var payload = { session_id: sid, shop: shop, context: { placement: placement } };\n"
+        "    fetch(base + '/api/evaluate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'omit' })\n"
+        "      .then(function(r){ return r.json(); })\n"
+        "      .then(function(data){\n"
+        "        var tr = (data && data.triggered_rules) || [];\n"
+        "        var cr = (data && data.control_rules) || [];\n"
+        "        for (var i=0;i<tr.length;i++){\n"
+        "          try {\n"
+        "            fetch(base + '/api/analytics/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'impression', placement: placement, rule_id: tr[i], session_id: sid, shop: shop }), credentials: 'omit' });\n"
+        "          } catch(e){}\n"
+        "        }\n"
+        "        for (var j=0;j<cr.length;j++){\n"
+        "          try {\n"
+        "            fetch(base + '/api/analytics/event', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'impression_control', placement: placement, rule_id: cr[j], session_id: sid, shop: shop }), credentials: 'omit' });\n"
+        "          } catch(e){}\n"
+        "        }\n"
+        "        if (data && data.suggestions && data.suggestions.length){ console.debug('[BooPug]', 'suggestions', data.suggestions); }\n"
+        "      })\n"
+        "      .catch(function(){});\n"
+        "  } catch(e){}\n"
+        "})();\n"
+    )
+    return Response(content=js, media_type="application/javascript", headers={"Cache-Control": "public, max-age=300"})
+
+
 @app.get("/api/health")
 async def health() -> Dict[str, Any]:
     return {"ok": True, "app": APP_TITLE}
@@ -492,10 +606,14 @@ async def catalog() -> Dict[str, Any]:
 
 # ---- Rules CRUD ----
 @app.get("/api/rules", dependencies=[Depends(require_admin_or_shop_session)])
-async def list_rules() -> Dict[str, Any]:
+async def list_rules(request: Request) -> Dict[str, Any]:
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM rules ORDER BY id DESC")
+    if shop:
+        cur.execute("SELECT * FROM rules WHERE shop=? ORDER BY id DESC", (shop,))
+    else:
+        cur.execute("SELECT * FROM rules WHERE shop IS NULL ORDER BY id DESC")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     for r in rows:
@@ -505,7 +623,7 @@ async def list_rules() -> Dict[str, Any]:
 
 
 @app.post("/api/rules", dependencies=[Depends(require_admin_or_shop_session)])
-async def create_rule(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def create_rule(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
     required = ["name", "placement", "conditions", "suggestions"]
     for k in required:
         if k not in payload:
@@ -522,12 +640,13 @@ async def create_rule(payload: Dict[str, Any]) -> Dict[str, Any]:
     per_session_cap = int(payload.get("per_session_cap", payload.get("session_cap", 0)))
     ab_test_pct = int(payload.get("ab_test_pct", 100))
     now = int(time.time())
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO rules (name, placement, conditions_json, suggestions_json, status, limit_count, priority, schedule_start, schedule_end, per_session_cap, ab_test_pct, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO rules (name, placement, conditions_json, suggestions_json, status, limit_count, priority, schedule_start, schedule_end, per_session_cap, ab_test_pct, created_at, updated_at, shop)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload["name"],
@@ -543,6 +662,7 @@ async def create_rule(payload: Dict[str, Any]) -> Dict[str, Any]:
             ab_test_pct,
             now,
             now,
+            shop,
         ),
     )
     conn.commit()
@@ -551,7 +671,8 @@ async def create_rule(payload: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": rid}
 
 @app.put("/api/rules/{rule_id}", dependencies=[Depends(require_admin_or_shop_session)])
-async def update_rule(rule_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+async def update_rule(request: Request, rule_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT * FROM rules WHERE id=?", (rule_id,))
@@ -561,6 +682,9 @@ async def update_rule(rule_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise HTTPException(404, "Rule not found")
 
     prevd = dict(prev)
+    if shop and prevd.get("shop") and prevd.get("shop") != shop:
+        conn.close()
+        raise HTTPException(403, "Cannot modify rule from a different shop")
     name = payload.get("name", prevd.get("name"))
     placement = payload.get("placement", prevd.get("placement"))
     conditions_json = json.dumps(payload.get("conditions", json.loads(prevd.get("conditions_json", "{}"))))
@@ -576,33 +700,57 @@ async def update_rule(rule_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     per_session_cap = int(payload.get("per_session_cap", payload.get("session_cap", prevd.get("per_session_cap", 0))))
     ab_test_pct = int(payload.get("ab_test_pct", prevd.get("ab_test_pct", 100)))
 
-    cur.execute(
-        """
-        UPDATE rules SET name=?, placement=?, conditions_json=?, suggestions_json=?, status=?, limit_count=?, priority=?, schedule_start=?, schedule_end=?, per_session_cap=?, ab_test_pct=?, updated_at=?
-        WHERE id=?
-        """,
-        (
-            name,
-            placement,
-            conditions_json,
-            suggestions_json,
-            status,
-            limit_count,
-            priority,
-            schedule_start,
-            schedule_end,
-            per_session_cap,
-            ab_test_pct,
-            int(time.time()),
-            rule_id,
-        ),
-    )
+    if shop:
+        cur.execute(
+            """
+            UPDATE rules SET name=?, placement=?, conditions_json=?, suggestions_json=?, status=?, limit_count=?, priority=?, schedule_start=?, schedule_end=?, per_session_cap=?, ab_test_pct=?, updated_at=?
+            WHERE id=? AND shop=?
+            """,
+            (
+                name,
+                placement,
+                conditions_json,
+                suggestions_json,
+                status,
+                limit_count,
+                priority,
+                schedule_start,
+                schedule_end,
+                per_session_cap,
+                ab_test_pct,
+                int(time.time()),
+                rule_id,
+                shop,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE rules SET name=?, placement=?, conditions_json=?, suggestions_json=?, status=?, limit_count=?, priority=?, schedule_start=?, schedule_end=?, per_session_cap=?, ab_test_pct=?, updated_at=?
+            WHERE id=? AND shop IS NULL
+            """,
+            (
+                name,
+                placement,
+                conditions_json,
+                suggestions_json,
+                status,
+                limit_count,
+                priority,
+                schedule_start,
+                schedule_end,
+                per_session_cap,
+                ab_test_pct,
+                int(time.time()),
+                rule_id,
+            ),
+        )
     conn.commit()
     conn.close()
     return {"ok": True}
 
 @app.post("/api/rules/import", dependencies=[Depends(require_admin_or_shop_session)])
-async def import_rules(payload: Any = Body(...), replace: bool = Query(False)) -> Dict[str, Any]:
+async def import_rules(request: Request, payload: Any = Body(...), replace: bool = Query(False)) -> Dict[str, Any]:
     # Normalize incoming structure
     rules_in: List[Dict[str, Any]]
     if isinstance(payload, list):
@@ -613,10 +761,14 @@ async def import_rules(payload: Any = Body(...), replace: bool = Query(False)) -
         raise HTTPException(400, "Invalid import format. Provide a list of rules or {'rules': [...]}.")
 
     now = int(time.time())
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
     if replace:
-        cur.execute("DELETE FROM rules")
+        if shop:
+            cur.execute("DELETE FROM rules WHERE shop=?", (shop,))
+        else:
+            cur.execute("DELETE FROM rules WHERE shop IS NULL")
 
     inserted = 0
     for r in rules_in:
@@ -643,8 +795,8 @@ async def import_rules(payload: Any = Body(...), replace: bool = Query(False)) -
 
         cur.execute(
             """
-            INSERT INTO rules (name, placement, conditions_json, suggestions_json, status, limit_count, priority, schedule_start, schedule_end, per_session_cap, ab_test_pct, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO rules (name, placement, conditions_json, suggestions_json, status, limit_count, priority, schedule_start, schedule_end, per_session_cap, ab_test_pct, created_at, updated_at, shop)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 name,
@@ -660,6 +812,7 @@ async def import_rules(payload: Any = Body(...), replace: bool = Query(False)) -
                 ab_test_pct,
                 created_at,
                 updated_at,
+                shop,
             ),
         )
         inserted += 1
@@ -669,23 +822,36 @@ async def import_rules(payload: Any = Body(...), replace: bool = Query(False)) -
     return {"inserted": inserted}
 
 @app.get("/api/analytics/by-rule", dependencies=[Depends(require_admin_or_shop_session)])
-async def analytics_by_rule() -> Dict[str, Any]:
+async def analytics_by_rule(request: Request) -> Dict[str, Any]:
     """Return per-rule analytics counts and basic rates and revenue.
 
     Response shape:
       { rules: { [rule_id]: { impression: int, accept: int, rate: float, revenue: float, discount: float } } }
     """
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
     # counts (including control impressions)
-    cur.execute(
-        "SELECT rule_id, event_type, COUNT(*) as c FROM analytics WHERE rule_id IS NOT NULL GROUP BY rule_id, event_type"
-    )
+    if shop:
+        cur.execute(
+            "SELECT rule_id, event_type, COUNT(*) as c FROM analytics WHERE rule_id IS NOT NULL AND shop=? GROUP BY rule_id, event_type",
+            (shop,),
+        )
+    else:
+        cur.execute(
+            "SELECT rule_id, event_type, COUNT(*) as c FROM analytics WHERE rule_id IS NOT NULL AND shop IS NULL GROUP BY rule_id, event_type"
+        )
     rows = cur.fetchall()
     # accept meta for revenue
-    cur.execute(
-        "SELECT rule_id, meta_json FROM analytics WHERE event_type='accept' AND rule_id IS NOT NULL"
-    )
+    if shop:
+        cur.execute(
+            "SELECT rule_id, meta_json FROM analytics WHERE event_type='accept' AND rule_id IS NOT NULL AND shop=?",
+            (shop,),
+        )
+    else:
+        cur.execute(
+            "SELECT rule_id, meta_json FROM analytics WHERE event_type='accept' AND rule_id IS NOT NULL AND shop IS NULL"
+        )
     acc_rows = cur.fetchall()
     conn.close()
     agg: Dict[str, Dict[str, int]] = {}
@@ -726,10 +892,14 @@ async def analytics_by_rule() -> Dict[str, Any]:
     return {"rules": out}
 
 @app.get("/api/analytics/summary", dependencies=[Depends(require_admin_or_shop_session)])
-async def analytics_summary() -> Dict[str, Any]:
+async def analytics_summary(request: Request) -> Dict[str, Any]:
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT event_type, COUNT(*) as c FROM analytics GROUP BY event_type")
+    if shop:
+        cur.execute("SELECT event_type, COUNT(*) as c FROM analytics WHERE shop=? GROUP BY event_type", (shop,))
+    else:
+        cur.execute("SELECT event_type, COUNT(*) as c FROM analytics WHERE shop IS NULL GROUP BY event_type")
     rows = cur.fetchall()
     conn.close()
     out: Dict[str, int] = {}
@@ -738,7 +908,7 @@ async def analytics_summary() -> Dict[str, Any]:
     return {"summary": out}
 
 @app.post("/api/analytics/event")
-async def analytics_event(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def analytics_event(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
     et = payload.get("event_type")
     if not et:
         raise HTTPException(400, "Missing event_type")
@@ -747,21 +917,26 @@ async def analytics_event(payload: Dict[str, Any]) -> Dict[str, Any]:
     rule_id = payload.get("rule_id")
     session_id = payload.get("session_id")
     meta = payload.get("meta")
+    shop = payload.get("shop") or current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO analytics (ts, event_type, placement, rule_id, meta_json, session_id) VALUES (?,?,?,?,?,?)",
-        (ts, str(et), placement, rule_id, json.dumps(meta) if meta is not None else None, session_id),
+        "INSERT INTO analytics (ts, event_type, placement, rule_id, meta_json, session_id, shop) VALUES (?,?,?,?,?,?,?)",
+        (ts, str(et), placement, rule_id, json.dumps(meta) if meta is not None else None, session_id, shop),
     )
     conn.commit()
     conn.close()
     return {"ok": True}
 
 @app.get("/api/rules/export", dependencies=[Depends(require_admin_or_shop_session)])
-async def export_rules() -> Dict[str, Any]:
+async def export_rules(request: Request) -> Dict[str, Any]:
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM rules ORDER BY id ASC")
+    if shop:
+        cur.execute("SELECT * FROM rules WHERE shop=? ORDER BY id ASC", (shop,))
+    else:
+        cur.execute("SELECT * FROM rules WHERE shop IS NULL ORDER BY id ASC")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     out: List[Dict[str, Any]] = []
@@ -772,10 +947,14 @@ async def export_rules() -> Dict[str, Any]:
     return {"rules": out}
 
 @app.delete("/api/rules/{rule_id}", dependencies=[Depends(require_admin_or_shop_session)])
-async def delete_rule(rule_id: int) -> Dict[str, Any]:
+async def delete_rule(request: Request, rule_id: int) -> Dict[str, Any]:
+    shop = current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("DELETE FROM rules WHERE id=?", (rule_id,))
+    if shop:
+        cur.execute("DELETE FROM rules WHERE id=? AND shop=?", (rule_id, shop))
+    else:
+        cur.execute("DELETE FROM rules WHERE id=? AND shop IS NULL", (rule_id,))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -810,13 +989,17 @@ def rule_matches(rule: Dict[str, Any], context: Dict[str, Any]) -> bool:
     return True
 
 @app.post("/api/evaluate")
-async def evaluate(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def evaluate(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
     context = payload.get("context", {})
     session_id = payload.get("session_id")
     debug = bool(payload.get("debug", False))
+    shop = payload.get("shop") or current_shop_from_request(request)
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM rules WHERE status='active' ORDER BY priority ASC, id ASC")
+    if shop:
+        cur.execute("SELECT * FROM rules WHERE status='active' AND shop=? ORDER BY priority ASC, id ASC", (shop,))
+    else:
+        cur.execute("SELECT * FROM rules WHERE status='active' AND shop IS NULL ORDER BY priority ASC, id ASC")
     db_rules = [dict(r) for r in cur.fetchall()]
     conn.close()
 
@@ -863,10 +1046,16 @@ async def evaluate(payload: Dict[str, Any]) -> Dict[str, Any]:
         if cap > 0 and session_id:
             conn2 = get_conn()
             cur2 = conn2.cursor()
-            cur2.execute(
-                "SELECT COUNT(*) AS c FROM analytics WHERE event_type='impression' AND rule_id=? AND session_id=?",
-                (int(r["id"]), str(session_id)),
-            )
+            if shop:
+                cur2.execute(
+                    "SELECT COUNT(*) AS c FROM analytics WHERE event_type='impression' AND rule_id=? AND session_id=? AND shop=?",
+                    (int(r["id"]), str(session_id), shop),
+                )
+            else:
+                cur2.execute(
+                    "SELECT COUNT(*) AS c FROM analytics WHERE event_type='impression' AND rule_id=? AND session_id=? AND shop IS NULL",
+                    (int(r["id"]), str(session_id)),
+                )
             row = cur2.fetchone()
             conn2.close()
             seen = int(row[0]) if row else 0

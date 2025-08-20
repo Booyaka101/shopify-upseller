@@ -39,7 +39,7 @@
       <div class="card">
         <h2>Create Rule</h2>
         <div class="row">
-          <div style="flex:1">
+          <div class="field-grow">
             <label>Name</label>
             <input id="name" type="text" placeholder="Camera → SD Card" />
           </div>
@@ -115,15 +115,17 @@
     <div class="grid" style="margin-top:20px;">
       <div class="card">
         <h2>Rules</h2>
-        <div class="row" style="gap:8px;margin-bottom:8px;align-items:flex-end;">
+        <div class="toolbar" style="margin-bottom:8px;">
           <button id="exportRules" class="secondary">Export JSON</button>
-          <input id="importFile" type="file" accept="application/json" />
+          <input id="importFile" type="file" accept="application/json" class="hidden-file" />
+          <button id="chooseImport" class="secondary">Choose file</button>
+          <span id="importFileName" class="small"></span>
           <label class="small" style="display:flex;align-items:center;gap:6px;">
             <input id="replaceExisting" type="checkbox" /> Replace existing
           </label>
           <button id="importRules">Import</button>
           <button id="importTemplate" class="secondary">Import from Template</button>
-          <div style="flex:1"></div>
+          <div class="spacer"></div>
           <input id="searchRules" type="text" placeholder="Search rules..." style="max-width:260px" />
           <select id="filterPlacement" style="width:160px">
             <option value="all">All placements</option>
@@ -139,7 +141,24 @@
         </div>
         <table class="table" id="rulesTable">
           <thead>
-            <tr><th>ID</th><th>Name</th><th>Placement</th><th>Limit</th><th>Priority</th><th>Cap</th><th>AB%</th><th>Status</th><th>Impr</th><th>Ctrl</th><th>Acc</th><th>Rate</th><th>Lift</th><th>Rev</th><th>Disc</th><th></th></tr>
+            <tr>
+              <th class="right">ID</th>
+              <th>Name</th>
+              <th>Placement</th>
+              <th class="right">Limit</th>
+              <th class="right">Priority</th>
+              <th class="right">Cap</th>
+              <th class="right">AB%</th>
+              <th>Status</th>
+              <th class="right">Impr</th>
+              <th class="right">Ctrl</th>
+              <th class="right">Acc</th>
+              <th class="right">Rate</th>
+              <th class="right">Lift</th>
+              <th class="right">Rev</th>
+              <th class="right">Disc</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -413,26 +432,26 @@ async function refreshRules(){
   rows.forEach(({r,kpi})=>{
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${r.id}</td>
-      <td>${r.name}</td>
+      <td class="right mono">${r.id}</td>
+      <td><div class="ellipsis" style="max-width:220px">${r.name}</div></td>
       <td>${r.placement}</td>
-      <td>${r.limit_count}</td>
-      <td><input type="number" class="edit-priority" value="${r.priority??100}" style="width:80px" /></td>
-      <td>${r.per_session_cap??0}</td>
-      <td><input type="number" class="edit-ab" value="${r.ab_test_pct??100}" min="0" max="100" style="width:70px" /></td>
+      <td class="right mono">${r.limit_count}</td>
+      <td><input type="number" class="edit-priority" value="${r.priority??100}" style="width:80px; text-align:right" /></td>
+      <td class="right mono">${r.per_session_cap??0}</td>
+      <td><input type="number" class="edit-ab" value="${r.ab_test_pct??100}" min="0" max="100" style="width:70px; text-align:right" /></td>
       <td>
         <select class="edit-status">
           <option value="active" ${r.status==='active'?'selected':''}>active</option>
           <option value="paused" ${r.status==='paused'?'selected':''}>paused</option>
         </select>
       </td>
-      <td>${kpi.impression||0}</td>
-      <td>${kpi.control_impression||0}</td>
-      <td>${kpi.accept||0}</td>
-      <td>${(kpi.rate||0).toFixed(2)}</td>
-      <td>${(kpi.lift||0).toFixed(4)}</td>
-      <td>$${(kpi.revenue||0).toFixed(2)}</td>
-      <td>$${(kpi.discount||0).toFixed(2)}</td>
+      <td class="right mono">${kpi.impression||0}</td>
+      <td class="right mono">${kpi.control_impression||0}</td>
+      <td class="right mono">${kpi.accept||0}</td>
+      <td class="right mono">${(kpi.rate||0).toFixed(2)}</td>
+      <td class="right mono">${(kpi.lift||0).toFixed(4)}</td>
+      <td class="right mono">$${(kpi.revenue||0).toFixed(2)}</td>
+      <td class="right mono">$${(kpi.discount||0).toFixed(2)}</td>
       <td>
         <div class="flex" style="gap:6px;">
           <button data-id="${r.id}" class="save">Save</button>
@@ -495,6 +514,18 @@ if (exportBtn) exportBtn.onclick = async () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 0);
 };
+
+// Choose file helper (hides raw file input)
+const chooseBtn = document.getElementById('chooseImport');
+const importFile = document.getElementById('importFile');
+const importFileName = document.getElementById('importFileName');
+if (chooseBtn && importFile) {
+  chooseBtn.onclick = () => importFile.click();
+  importFile.addEventListener('change', ()=>{
+    const f = importFile.files && importFile.files[0];
+    if (importFileName) importFileName.textContent = f ? f.name : '';
+  });
+}
 
 // Import rules from selected JSON file
 const importBtn = document.querySelector('#importRules');

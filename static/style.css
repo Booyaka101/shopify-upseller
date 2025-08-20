@@ -74,7 +74,7 @@ button.secondary { background: rgba(255,255,255,0.1); border: 1px solid rgba(255
 .table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.02); }
 .kv { display:flex; align-items:center; justify-content:space-between; font-size:13px; color: var(--muted); }
 .flex { display:flex; gap:12px; align-items:center; }
-.row { display:flex; gap:12px; }
+.row { display:flex; gap:12px; flex-wrap: wrap; }
 img.prod { width: 64px; height: 64px; border-radius: 10px; background:#111; border:1px solid rgba(255,255,255,0.06); }
 .upsell-item { display:flex; gap:12px; align-items:center; border:1px solid rgba(255,255,255,0.1); padding:12px; border-radius:12px; margin-bottom:10px; background: rgba(0,0,0,0.2); transition: border-color .15s ease, background .15s ease; }
 .upsell-item:hover { border-color: rgba(255,255,255,0.18); background: rgba(0,0,0,0.25); }
@@ -103,3 +103,12 @@ footer { padding: 20px; text-align:center; color: var(--muted); font-size: 12px;
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
 }
+
+/* Admin utilities */
+.right { text-align: right; }
+.mono { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toolbar { display:flex; flex-wrap: wrap; gap:8px; align-items: flex-end; }
+.toolbar .spacer { flex: 1; }
+.hidden-file { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+.field-grow { flex: 1 1 320px; min-width: 260px; }
