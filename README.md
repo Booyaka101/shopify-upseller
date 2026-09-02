@@ -12,12 +12,12 @@ BooPug Studios — a lightweight upsell rules engine you can run locally to test
 1. Open PowerShell.
 2. Run:
    ```powershell
-   cd C:\Users\cbosc\CascadeProjects\BooPugUpsellRules
+   cd BooPugUpsellRules
    .\run.ps1
    ```
    Or use Command Prompt:
    ```bat
-   C:\Users\cbosc\CascadeProjects\BooPugUpsellRules\run.cmd
+   run.cmd
    ```
 3. Open http://127.0.0.1:8000/admin and http://127.0.0.1:8000/simulator
 
